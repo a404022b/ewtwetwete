@@ -1,0 +1,1220 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<title>AR 明信片即時調參 v9.6 iPhone船修正版</title>
+
+<script>
+(() => {
+  const gum = navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices);
+  if (!gum) return;
+  navigator.mediaDevices.getUserMedia = async (constraints={}) => {
+    const c = JSON.parse(JSON.stringify(constraints || {}));
+    const b = (typeof c.video === "object" && c.video) ? c.video : {};
+    c.video = {
+      ...b,
+      facingMode: b.facingMode || {ideal:"environment"},
+      width:{ideal:1920},
+      height:{ideal:1080},
+      frameRate:{ideal:30,max:30}
+    };
+    return gum(c);
+  };
+})();
+</script>
+
+<script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#111;font-family:system-ui,"Microsoft JhengHei",sans-serif}
+#home{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;padding:24px;background:#efe7d9}
+.panel{width:min(430px,100%);text-align:center;color:#2f281d}
+.panel p{line-height:1.55}
+button{border:0;border-radius:12px;min-height:46px;padding:0 16px;font-size:17px;font-weight:700}
+#startBtn{width:100%;background:#2f281d;color:#fff}
+#arRoot{position:fixed;inset:0;opacity:0;pointer-events:none;background:#000}
+body.scanning #home{display:none}
+body.scanning #arRoot{opacity:1;pointer-events:auto;z-index:1500}
+a-scene{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;z-index:1500}
+body.scanning video,body.scanning canvas{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;object-fit:cover!important}
+
+#hud{display:none;position:fixed;z-index:3000;left:12px;right:12px;top:max(10px,env(safe-area-inset-top));pointer-events:none}
+body.scanning #hud{display:block}
+#status,#camInfo{margin:0 auto 6px;max-width:520px;padding:8px 10px;border-radius:11px;background:rgba(0,0,0,.62);color:#fff;text-align:center}
+#camInfo{font-size:12px}
+#stopBtn,#tunerToggle{display:none;position:fixed;bottom:max(12px,env(safe-area-inset-bottom));z-index:3300;background:rgba(20,20,20,.85);color:#fff;border:1px solid rgba(255,255,255,.5)}
+#stopBtn{right:12px}
+#explainBtn{display:none;position:fixed;top:max(94px,calc(env(safe-area-inset-top) + 84px));right:12px;z-index:3300;background:rgba(20,20,20,.78);color:#fff;border:1px solid rgba(255,255,255,.45);min-height:40px;padding:0 14px;font-size:15px}
+body.scanning #explainBtn{display:block}
+#creditsOverlay{display:none;position:fixed;z-index:3350;left:12px;right:12px;bottom:82px;height:220px;overflow:hidden;border-radius:14px;background:rgba(10,10,10,.48);backdrop-filter:blur(5px);pointer-events:none}
+#creditsOverlay.show{display:block}
+#creditsOverlayInner{position:relative;height:100%;padding:16px;overflow:hidden}
+#creditsOverlayText{white-space:pre-wrap;line-height:1.65;text-align:left;will-change:transform}
+
+#tunerToggle{left:12px}
+body.scanning #stopBtn,body.scanning #tunerToggle{display:block}
+
+#tuner{display:none;position:fixed;z-index:3250;left:10px;right:10px;bottom:72px;max-height:60vh;overflow:auto;background:rgba(12,12,12,.91);color:#fff;border-radius:14px;padding:12px;backdrop-filter:blur(8px)}
+#tuner.open{display:block}
+.group{margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.16)}
+.group:last-child{border-bottom:0}
+.group h3{margin:0 0 8px;font-size:15px}
+.row{display:grid;grid-template-columns:116px 1fr 60px;gap:8px;align-items:center;margin:7px 0}
+.row label{font-size:13px}
+.row input[type=range]{width:100%}
+.val{font-size:12px;text-align:right;opacity:.9}
+.checkboxRow{display:flex;gap:8px;align-items:center;margin:8px 0;font-size:13px}
+#snapshot{width:100%;margin-top:6px;background:#fff;color:#111}
+#values{width:100%;min-height:120px;margin-top:8px;resize:none;border-radius:10px;padding:8px;font-family:monospace;font-size:12px;background:#181818;color:#d9f6df;border:1px solid rgba(255,255,255,.2)}
+#targetLoading{display:none;position:fixed;z-index:3400;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none}
+#targetLoading.show{display:block}
+.spinner{width:46px;height:46px;border:5px solid rgba(255,255,255,.30);border-top-color:#fff;border-radius:50%;animation:spin .72s linear infinite;filter:drop-shadow(0 1px 2px rgba(0,0,0,.35))}
+@keyframes spin{to{transform:rotate(360deg)}}
+.textInputRow{display:grid;grid-template-columns:1fr auto;gap:8px;margin:8px 0 10px}
+.textInputRow input{min-width:0;border:1px solid rgba(255,255,255,.25);border-radius:9px;padding:9px 10px;font-size:16px}
+.textInputRow button{min-height:40px;padding:0 12px;font-size:15px}
+.selectRow{display:grid;grid-template-columns:116px 1fr;gap:8px;align-items:center;margin:7px 0}
+.selectRow select{width:100%;padding:7px 8px;border-radius:8px;font-size:14px}
+.textAreaRow textarea{
+  width:100%;
+  min-height:92px;
+  resize:vertical;
+  border:1px solid rgba(255,255,255,.25);
+  border-radius:9px;
+  padding:9px 10px;
+  font-size:15px;
+  line-height:1.45;
+}
+.colorRow{display:grid;grid-template-columns:116px 1fr 60px;gap:8px;align-items:center;margin:7px 0}
+.colorRow input[type=color]{width:100%;height:34px;border:0;border-radius:8px;background:transparent;padding:0}
+
+
+</style>
+
+<script>
+AFRAME.registerShader('video-grade',{
+  schema:{
+    src:{type:'map',is:'uniform'},
+    brightness:{type:'number',is:'uniform',default:1.0},
+    contrast:{type:'number',is:'uniform',default:1.0},
+    opacity:{type:'number',is:'uniform',default:1.0}
+  },
+  vertexShader:`
+    varying vec2 vUV;
+    void main(){
+      vUV=uv;
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+    }
+  `,
+  fragmentShader:`
+    uniform sampler2D src;
+    uniform float brightness;
+    uniform float contrast;
+    uniform float opacity;
+    varying vec2 vUV;
+    void main(){
+      vec4 c=texture2D(src,vUV);
+      c.rgb=(c.rgb-0.5)*contrast+0.5;
+      c.rgb*=brightness;
+      float a=c.a*opacity;
+      if(a<0.10) discard;
+      gl_FragColor=vec4(c.rgb,a);
+    }
+  `
+});
+
+
+AFRAME.registerShader('video-grade-key',{
+  schema:{
+    src:{type:'map',is:'uniform'},
+    brightness:{type:'number',is:'uniform',default:1.0},
+    contrast:{type:'number',is:'uniform',default:1.0},
+    opacity:{type:'number',is:'uniform',default:1.0},
+    similarity:{type:'number',is:'uniform',default:0.14},
+    smoothness:{type:'number',is:'uniform',default:0.11}
+  },
+  vertexShader:`
+    varying vec2 vUV;
+    void main(){
+      vUV=uv;
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+    }
+  `,
+  fragmentShader:`
+    uniform sampler2D src;
+    uniform float brightness;
+    uniform float contrast;
+    uniform float opacity;
+    uniform float similarity;
+    uniform float smoothness;
+    varying vec2 vUV;
+
+    void main(){
+      vec4 c=texture2D(src,vUV);
+
+      // Source boat.mp4 blue screen is approximately #4967B0.
+      vec3 key=vec3(73.0/255.0,103.0/255.0,176.0/255.0);
+      float d=distance(c.rgb,key);
+      float a=smoothstep(similarity,similarity+smoothness,d);
+
+      // Reduce blue spill on semi-transparent edge pixels.
+      float spill=(1.0-a)*0.45;
+      c.b=max(0.0,c.b-spill);
+      c.rgb=(c.rgb-0.5)*contrast+0.5;
+      c.rgb*=brightness;
+
+      a*=opacity;
+      if(a<0.025) discard;
+      gl_FragColor=vec4(c.rgb,a);
+    }
+  `
+});
+
+AFRAME.registerShader('soft-irregular-bg',{
+  schema:{
+    src:{type:'map',is:'uniform'},
+    color:{type:'color',is:'uniform',default:'#f3e6cf'},
+    opacity:{type:'number',is:'uniform',default:0.35},
+    feather:{type:'number',is:'uniform',default:0.08},
+    irregular:{type:'number',is:'uniform',default:0.05},
+    textured:{type:'number',is:'uniform',default:0.0}
+  },
+  vertexShader:`
+    varying vec2 vUV;
+    void main(){
+      vUV=uv;
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+    }
+  `,
+  fragmentShader:`
+    uniform sampler2D src;
+    uniform vec3 color;
+    uniform float opacity;
+    uniform float feather;
+    uniform float irregular;
+    uniform float textured;
+    varying vec2 vUV;
+
+    void main(){
+      vec4 tex=texture2D(src,vUV);
+      vec3 rgb=mix(color,tex.rgb,step(0.5,textured));
+      float srcA=mix(1.0,tex.a,step(0.5,textured));
+
+      float edge=min(min(vUV.x,1.0-vUV.x),min(vUV.y,1.0-vUV.y));
+      float wobble=(sin(vUV.x*31.0)+sin(vUV.y*27.0)+sin((vUV.x+vUV.y)*19.0))*0.333333;
+      float jitter=wobble*irregular;
+      float f=max(feather,0.001);
+      float mask=smoothstep(0.0,f,edge+jitter);
+
+      gl_FragColor=vec4(rgb,srcA*opacity*mask);
+    }
+  `
+});
+
+
+
+AFRAME.registerShader('soft-irregular-water',{
+  schema:{
+    src:{type:'map',is:'uniform'},
+    opacity:{type:'number',is:'uniform',default:0.34},
+    feather:{type:'number',is:'uniform',default:0.10},
+    irregular:{type:'number',is:'uniform',default:0.035}
+  },
+  vertexShader:`
+    varying vec2 vUV;
+    void main(){
+      vUV=uv;
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+    }
+  `,
+  fragmentShader:`
+    uniform sampler2D src;
+    uniform float opacity;
+    uniform float feather;
+    uniform float irregular;
+    varying vec2 vUV;
+    void main(){
+      vec4 tex=texture2D(src,vUV);
+      float edge=min(min(vUV.x,1.0-vUV.x),min(vUV.y,1.0-vUV.y));
+      float wobble=(sin(vUV.x*23.0)+sin(vUV.y*19.0)+sin((vUV.x+vUV.y)*13.0))*0.333333;
+      float mask=smoothstep(0.0,max(feather,0.001),edge+wobble*irregular);
+      float a=tex.a*opacity*mask;
+      if(a<0.015) discard;
+      gl_FragColor=vec4(tex.rgb,a);
+    }
+  `
+});
+
+AFRAME.registerComponent('water-gentle-motion',{
+  init(){
+    this.baseX=0;
+    this.baseY=0;
+  },
+  tick(t){
+    const cfg=window.ARCFG;
+    if(!cfg || !cfg.water || !cfg.water.enabled) return;
+
+    // Very light movement only: no custom shader, so camera startup stays stable.
+    const a=cfg.water.flowAmp;
+    const s=cfg.water.flowSpeed;
+    this.el.object3D.position.x = Math.sin(t*0.0007*s) * a;
+    this.el.object3D.position.y = cfg.water.y + Math.cos(t*0.00055*s) * a*0.25;
+
+    const pulse = 1 + Math.sin(t*0.0011*s) * cfg.water.scalePulse;
+    this.el.object3D.scale.set(pulse,pulse,1);
+
+    const mesh=this.el.getObject3D('mesh');
+    if(mesh && mesh.material){
+      mesh.material.opacity = cfg.water.opacity * (0.96 + 0.04*Math.sin(t*0.0013*s));
+      mesh.material.transparent = true;
+    }
+  }
+});
+
+AFRAME.registerComponent('cloud-drift-fade',{
+  schema:{idx:{type:'int',default:1}},
+  init(){this.phase=(this.data.idx-1)*0.31},
+  tick(t){
+    const cfg=window.ARCFG;if(!cfg)return;
+    const i=this.data.idx-1,c=cfg.clouds[i];
+    const duration=26000/Math.max(0.1,cfg.cloudSpeed);
+    const q=((t/duration)+this.phase)%1;
+    const x=c.x-c.span/2+q*c.span;
+    this.el.object3D.position.set(x,c.y,c.z);
+    this.el.object3D.scale.set(c.scale,c.scale,1);
+
+    const fade=Math.sin(t*c.fadeFreq + this.phase)*0.5+0.5;
+    const opacity=Math.max(0,Math.min(1,c.opacity - c.fadeRange/2 + fade*c.fadeRange));
+    const m=this.el.getObject3D('mesh');
+    if(m?.material){m.material.transparent=true;m.material.opacity=opacity}
+  }
+});
+
+AFRAME.registerComponent('boat-motion',{
+  schema:{idx:{type:'int',default:1}},
+  init(){this.lastWake=0;this.wakeRoot=document.querySelector('#wakeRoot'+this.data.idx)},
+  tick(t){
+    const cfg=window.ARCFG;if(!cfg)return;
+    const b=cfg.boats[this.data.idx-1];
+    if(!b.enabled){this.el.setAttribute('visible',false);return}
+    this.el.setAttribute('visible',true);
+
+    const duration=b.baseDuration/Math.max(.1,b.speed);
+    const p=((t+b.phaseOffset)%duration)/duration;
+    const e=p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;
+    const x=b.startX+(b.endX-b.startX)*e;
+    const y=b.y+Math.sin((t+b.phaseOffset)*.0045)*.003;
+    this.el.object3D.position.set(x,y,b.z);
+
+    const wk=cfg.wake;
+    if(t-this.lastWake>wk.interval){
+      this.lastWake=t;
+      this.spawnWake(x-wk.offsetX,y-wk.offsetY,wk.z);
+    }
+  },
+  spawnWake(x,y,z){
+    const cfg=window.ARCFG;if(!cfg||!this.wakeRoot)return;
+    const wk=cfg.wake;
+    const e=document.createElement('a-ellipse');
+    e.setAttribute('position',`${x} ${y} ${z}`);
+    e.setAttribute('radius-x',String(wk.rx));
+    e.setAttribute('radius-y',String(wk.ry));
+    e.setAttribute('material',`color:#e5fff8;transparent:true;opacity:${wk.opacity};side:double;shader:flat;depthWrite:false`);
+    this.wakeRoot.appendChild(e);
+    const born=performance.now(),life=wk.life,obj=e.object3D;
+    const f=(now)=>{
+      const q=(now-born)/life;
+      if(q>=1){e.remove();return}
+      obj.position.x-=wk.drift*q;
+      obj.scale.set(1+q*wk.growX,1+q*wk.growY,1);
+      const m=e.getObject3D('mesh');
+      if(m?.material)m.material.opacity=wk.opacity*(1-q);
+      requestAnimationFrame(f);
+    };
+    requestAnimationFrame(f);
+  }
+});
+</script>
+</head>
+
+<body>
+<div id="home">
+  <div class="panel">
+    <h1>AR 明信片即時調參 v9.6 iPhone船修正版</h1>
+    <p>新增背景切換、第二艘船、每朵雲獨立 Z/大小/透明呼吸與更明顯船尾水紋。</p>
+    <button id="startBtn">開始 AR 掃描</button>
+  </div>
+</div>
+
+<div id="arRoot">
+<a-scene id="arScene"
+  mindar-image="imageTargetSrc: ./assets/targets.mind; autoStart:false;"
+  color-space="sRGB"
+  renderer="colorManagement:true;physicallyCorrectLights:true;alpha:true"
+  vr-mode-ui="enabled:false"
+  device-orientation-permission-ui="enabled:false"
+  embedded>
+
+<a-assets timeout="15000">
+  <img id="backBridgeTex" src="./assets/backbridge.png">
+  <img id="frontBridgeTex" src="./assets/front_bridge.png">
+  <img id="cloud1Tex" src="./assets/cloud1.png">
+  <img id="cloud2Tex" src="./assets/cloud2.png">
+  <img id="cloud3Tex" src="./assets/cloud3.png">
+  <img id="cloud4Tex" src="./assets/cloud4.png">
+  <img id="bkTex" src="./assets/bk.png">
+  <img id="waterTex" src="./assets/water.png">
+  <video id="boatVideo" src="./assets/boat_alpha.webm" preload="auto" loop muted playsinline webkit-playsinline></video>
+  <video id="boatVideoIOS" src="./assets/boat.mp4" preload="auto" loop muted playsinline webkit-playsinline></video>
+</a-assets>
+
+<a-camera position="0 0 0" look-controls="enabled:false"></a-camera>
+
+<a-entity id="target0" mindar-image-target="targetIndex:0">
+  <a-entity id="sceneGroup">
+
+    <a-plane id="basePlate"
+      material="shader:soft-irregular-bg;color:#f3e6cf;opacity:.35;feather:.08;irregular:.05;textured:0;transparent:true;side:double;depthWrite:false">
+    </a-plane>
+
+    <a-plane id="blackBase"
+      visible="false"
+      material="shader:soft-irregular-bg;color:#111111;opacity:.45;feather:.08;irregular:.05;textured:0;transparent:true;side:double;depthWrite:false">
+    </a-plane>
+
+    <a-image id="bkLayer" src="#bkTex"
+      visible="false"
+      material="shader:soft-irregular-bg;src:#bkTex;opacity:.35;feather:.08;irregular:.05;textured:1;transparent:true;side:double;depthWrite:false">
+    </a-image>
+
+    <a-image id="backBridge" src="#backBridgeTex"
+      material="transparent:true;opacity:1;side:double;shader:flat;depthWrite:false"></a-image>
+
+    <a-image id="cloud1" src="#cloud1Tex" material="transparent:true;side:double;shader:flat;depthWrite:false" cloud-drift-fade="idx:1"></a-image>
+    <a-image id="cloud2" src="#cloud2Tex" material="transparent:true;side:double;shader:flat;depthWrite:false" cloud-drift-fade="idx:2"></a-image>
+    <a-image id="cloud3" src="#cloud3Tex" material="transparent:true;side:double;shader:flat;depthWrite:false" cloud-drift-fade="idx:3"></a-image>
+    <a-image id="cloud4" src="#cloud4Tex" material="transparent:true;side:double;shader:flat;depthWrite:false" cloud-drift-fade="idx:4"></a-image>
+
+    <a-entity id="wakeRoot1"></a-entity>
+    <a-video id="boat1" src="#boatVideo"
+      material="shader:video-grade;src:#boatVideo;brightness:1.25;contrast:1.75;opacity:1;transparent:true;side:double"
+      boat-motion="idx:1"
+      visible="false"></a-video>
+
+    <a-entity id="wakeRoot2"></a-entity>
+    <a-video id="boat2" src="#boatVideo"
+      material="shader:video-grade;src:#boatVideo;brightness:1.1;contrast:1.5;opacity:1;transparent:true;side:double"
+      boat-motion="idx:2"
+      visible="false"></a-video>
+
+    <a-image id="frontBridge" src="#frontBridgeTex"
+      material="transparent:true;opacity:1;side:double;shader:flat;depthWrite:false"></a-image>
+
+    <!-- Stable water layer: no custom shader -->
+    <a-image id="waterLayer" src="#waterTex"
+      visible="false"
+      position="0 -0.10 0.105"
+      material="shader:soft-irregular-water;src:#waterTex;opacity:.34;feather:.10;irregular:.035;transparent:true;side:double;depthWrite:false"
+      water-gentle-motion>
+    </a-image>
+    <a-image id="textLayer" visible="true" live-text-anim
+      material="transparent:true;opacity:1;side:double;shader:flat;depthWrite:false">
+    </a-image>
+
+    <a-image id="creditsLayer" visible="false" credits-scroll
+      material="transparent:true;opacity:1;side:double;shader:flat;depthWrite:false">
+    </a-image>
+
+  </a-entity>
+</a-entity>
+</a-scene>
+</div>
+
+<div id="hud">
+  <div id="status">尚未啟動</div>
+  <div id="camInfo">Camera: 等待資訊…</div>
+</div>
+<div id="targetLoading" aria-label="載入中"><div class="spinner"></div></div>
+<canvas id="textCanvas" width="1200" height="220" style="display:none"></canvas>
+<canvas id="creditsCanvas" width="1200" height="900" style="display:none"></canvas>
+
+
+<button id="tunerToggle">調整參數</button>
+<button id="stopBtn">結束掃描</button>
+<button id="explainBtn" type="button">看說明</button>
+<div id="creditsOverlay">
+  <div id="creditsOverlayInner">
+    <div id="creditsOverlayText"></div>
+  </div>
+</div>
+
+<div id="tuner">
+  <div class="group">
+    <h3>整體 / 背景</h3>
+    <div class="row"><label>整體尺寸</label><input id="scale" type="range" min=".45" max=".82" step=".01"><span class="val" id="scaleV"></span></div>
+    <div class="row"><label>整體 Z</label><input id="sceneZ" type="range" min="0" max=".07" step=".001"><span class="val" id="sceneZV"></span></div>
+
+    <div class="checkboxRow"><input id="useWhiteBase" type="checkbox" checked><label for="useWhiteBase">使用白色底層</label></div>
+    <div class="row"><label>白底透明度</label><input id="baseOpacity" type="range" min="0" max=".60" step=".01"><span class="val" id="baseOpacityV"></span></div>
+    <div class="row"><label>白底 Z</label><input id="baseZ" type="range" min="0" max=".03" step=".001"><span class="val" id="baseZV"></span></div>
+    <div class="row"><label>白底大小</label><input id="baseScale" type="range" min=".5" max="1.4" step=".02"><span class="val" id="baseScaleV"></span></div>
+    <div class="checkboxRow"><input id="useBlackBase" type="checkbox"><label for="useBlackBase">使用黑色底層</label></div>
+    <div class="row"><label>黑底透明度</label><input id="blackOpacity" type="range" min="0" max=".90" step=".01"><span class="val" id="blackOpacityV"></span></div>
+    <div class="row"><label>黑底 Z</label><input id="blackZ" type="range" min="0" max=".05" step=".001"><span class="val" id="blackZV"></span></div>
+    <div class="row"><label>黑底大小</label><input id="blackScale" type="range" min=".5" max="1.6" step=".02"><span class="val" id="blackScaleV"></span></div>
+
+    <div class="checkboxRow"><input id="useBk" type="checkbox"><label for="useBk">使用 bk.png 自訂背景</label></div>
+    <div class="row"><label>BK透明度</label><input id="bkOpacity" type="range" min="0" max="1" step=".02"><span class="val" id="bkOpacityV"></span></div>
+    <div class="row"><label>BK Z</label><input id="bkZ" type="range" min="0" max=".03" step=".001"><span class="val" id="bkZV"></span></div>
+    <div class="row"><label>BK大小</label><input id="bkScale" type="range" min=".5" max="1.4" step=".02"><span class="val" id="bkScaleV"></span></div>
+    <div class="checkboxRow"><input id="softBg" type="checkbox" checked><label for="softBg">背景不規則柔邊</label></div>
+    <div class="row"><label>柔邊範圍</label><input id="bgFeather" type="range" min="0" max=".20" step=".005"><span class="val" id="bgFeatherV"></span></div>
+    <div class="row"><label>邊緣不規則</label><input id="bgIrregular" type="range" min="0" max=".12" step=".005"><span class="val" id="bgIrregularV"></span></div>
+  </div>
+
+  <div class="group">
+    <h3>橋</h3>
+    <div class="row"><label>後橋 Z</label><input id="backZ" type="range" min="0" max=".06" step=".001"><span class="val" id="backZV"></span></div>
+    <div class="row"><label>前橋 Z</label><input id="frontZ" type="range" min="0" max=".09" step=".001"><span class="val" id="frontZV"></span></div>
+  </div>
+
+  <div class="group">
+    <h3>船 1</h3>
+    <div class="row"><label>大小</label><input id="b1Scale" type="range" min=".35" max="2.8" step=".05"><span class="val" id="b1ScaleV"></span></div>
+    <div class="row"><label>Y</label><input id="b1Y" type="range" min="-.18" max=".02" step=".002"><span class="val" id="b1YV"></span></div>
+    <div class="row"><label>Z</label><input id="b1Z" type="range" min="0" max=".08" step=".001"><span class="val" id="b1ZV"></span></div>
+    <div class="row"><label>起點 X</label><input id="b1StartX" type="range" min="-.35" max=".10" step=".01"><span class="val" id="b1StartXV"></span></div>
+    <div class="row"><label>終點 X</label><input id="b1EndX" type="range" min="-.10" max=".35" step=".01"><span class="val" id="b1EndXV"></span></div>
+    <div class="row"><label>速度</label><input id="b1Speed" type="range" min=".2" max="3" step=".05"><span class="val" id="b1SpeedV"></span></div>
+    <div class="row"><label>亮度</label><input id="b1Brightness" type="range" min=".5" max="2" step=".05"><span class="val" id="b1BrightnessV"></span></div>
+    <div class="row"><label>對比</label><input id="b1Contrast" type="range" min=".5" max="3" step=".05"><span class="val" id="b1ContrastV"></span></div>
+  </div>
+
+  <div class="group">
+    <h3>船 2</h3>
+    <div class="checkboxRow"><input id="b2Enabled" type="checkbox" checked><label for="b2Enabled">啟用第二艘船</label></div>
+    <div class="row"><label>大小</label><input id="b2Scale" type="range" min=".25" max="2.2" step=".05"><span class="val" id="b2ScaleV"></span></div>
+    <div class="row"><label>Y</label><input id="b2Y" type="range" min="-.18" max=".02" step=".002"><span class="val" id="b2YV"></span></div>
+    <div class="row"><label>Z</label><input id="b2Z" type="range" min="0" max=".08" step=".001"><span class="val" id="b2ZV"></span></div>
+    <div class="row"><label>起點 X</label><input id="b2StartX" type="range" min="-.35" max=".20" step=".01"><span class="val" id="b2StartXV"></span></div>
+    <div class="row"><label>終點 X</label><input id="b2EndX" type="range" min="-.20" max=".35" step=".01"><span class="val" id="b2EndXV"></span></div>
+    <div class="row"><label>速度</label><input id="b2Speed" type="range" min=".2" max="3" step=".05"><span class="val" id="b2SpeedV"></span></div>
+    <div class="row"><label>亮度</label><input id="b2Brightness" type="range" min=".5" max="2" step=".05"><span class="val" id="b2BrightnessV"></span></div>
+    <div class="row"><label>對比</label><input id="b2Contrast" type="range" min=".5" max="3" step=".05"><span class="val" id="b2ContrastV"></span></div>
+  </div>
+
+  <div class="group">
+    <h3>雲整體</h3>
+    <div class="row"><label>整體速度</label><input id="cloudSpeed" type="range" min=".2" max="3" step=".1"><span class="val" id="cloudSpeedV"></span></div>
+  </div>
+
+  <div id="cloudGroups"></div>
+
+  <div class="group">
+    <h3>歷史字幕 / 電影片尾</h3>
+    <div class="checkboxRow"><input id="creditsEnabled" type="checkbox" checked><label for="creditsEnabled">顯示歷史字幕</label></div>
+    <div class="textAreaRow">
+      <textarea id="creditsInput" maxlength="1200" placeholder="輸入歷史文字">1920年 明治橋
+明治橋曾是城市交通與河岸景觀的重要節點。
+在時代更迭中，橋梁見證了地方生活與城市發展。</textarea>
+    </div>
+    <div class="row"><label>字幕 X</label><input id="creditsX" type="range" min="-.50" max=".50" step=".005"><span class="val" id="creditsXV"></span></div>
+    <div class="row"><label>字幕 Y</label><input id="creditsY" type="range" min="-.45" max=".55" step=".005"><span class="val" id="creditsYV"></span></div>
+    <div class="row"><label>字幕 Z</label><input id="creditsZ" type="range" min="0" max=".22" step=".002"><span class="val" id="creditsZV"></span></div>
+    <div class="row"><label>框寬</label><input id="creditsW" type="range" min=".12" max=".75" step=".01"><span class="val" id="creditsWV"></span></div>
+    <div class="row"><label>框高</label><input id="creditsH" type="range" min=".08" max=".55" step=".01"><span class="val" id="creditsHV"></span></div>
+    <div class="row"><label>字體大小</label><input id="creditsSize" type="range" min="24" max="90" step="2"><span class="val" id="creditsSizeV"></span></div>
+    <div class="selectRow"><label for="creditsFont">字型</label><select id="creditsFont">
+      <option value="kai">楷體 / 書法感</option>
+      <option value="ming">明體 / 傳統</option>
+      <option value="song">宋體 / 書卷感</option>
+      <option value="ming">明體 / 傳統</option>
+      <option value="song">宋體 / 書卷感</option>
+      <option value="sans">黑體 / 現代</option>
+      <option value="rounded">圓體 / 柔和</option>
+      <option value="hand">手寫感</option>
+      <option value="mono">打字機</option>
+      <option value="thin">細黑體</option>
+      <option value="system">系統 UI</option>
+      <option value="system">系統 UI</option>
+    </select></div>
+    <div class="colorRow"><label>文字顏色</label><input id="creditsColor" type="color" value="#f6ead2"><span class="val">COLOR</span></div>
+    <div class="row"><label>文字透明度</label><input id="creditsOpacity" type="range" min=".05" max="1" step=".01"><span class="val" id="creditsOpacityV"></span></div>
+    <div class="colorRow"><label>框底顏色</label><input id="creditsBgColor" type="color" value="#000000"><span class="val">BG</span></div>
+    <div class="row"><label>框底透明度</label><input id="creditsBgOpacity" type="range" min="0" max=".85" step=".01"><span class="val" id="creditsBgOpacityV"></span></div>
+    <div class="row"><label>捲動速度</label><input id="creditsSpeed" type="range" min=".05" max="5" step=".05"><span class="val" id="creditsSpeedV"></span></div>
+    <div class="checkboxRow"><input id="creditsLoop" type="checkbox" checked><label for="creditsLoop">循環播放</label></div>
+    <button id="creditsApply" type="button">套用歷史字幕</button>
+  </div>
+
+  <div class="group">
+    <h3>現場文字</h3>
+    <div class="checkboxRow"><input id="textEnabled" type="checkbox" checked><label for="textEnabled">顯示文字</label></div>
+    <div class="textInputRow">
+      <input id="liveTextInput" type="text" value="1920年 明治橋" maxlength="80" placeholder="輸入想呈現的文字">
+      <button id="textSubmit" type="button">送出</button>
+    </div>
+    <div class="row"><label>文字 X</label><input id="textX" type="range" min="-.45" max=".45" step=".005"><span class="val" id="textXV"></span></div>
+    <div class="row"><label>文字 Y</label><input id="textY" type="range" min="-.35" max=".55" step=".005"><span class="val" id="textYV"></span></div>
+    <div class="row"><label>文字 Z</label><input id="textZ" type="range" min="0" max=".20" step=".002"><span class="val" id="textZV"></span></div>
+    <div class="row"><label>字體大小</label><input id="textSize" type="range" min="28" max="110" step="2"><span class="val" id="textSizeV"></span></div>
+    <div class="selectRow"><label for="textFont">字型</label><select id="textFont">
+      <option value="kai">楷體 / 書法感</option>
+      <option value="serif">明體 / 古典</option>
+      <option value="sans">黑體 / 現代</option>
+      <option value="rounded">圓體 / 柔和</option>
+      <option value="hand">手寫感</option>
+      <option value="mono">打字機</option>
+      <option value="thin">細黑體</option>
+    </select></div>
+    <div class="selectRow"><label for="textWeight">粗細</label><select id="textWeight">
+      <option value="400">一般</option><option value="600">半粗</option><option value="700">粗體</option><option value="900">特粗</option>
+    </select></div>
+    <div class="checkboxRow"><input id="textStroke" type="checkbox" checked><label for="textStroke">文字描邊</label></div>
+    <div class="selectRow"><label for="textAnim">文字動畫</label><select id="textAnim">
+      <option value="none">無</option><option value="float">輕微漂浮</option><option value="breathe">呼吸縮放</option>
+      <option value="fade">淡入淡出</option><option value="typewriter">打字出現</option><option value="shimmer">光澤掃過</option>
+    </select></div>
+    <div class="row"><label>動畫速度</label><input id="textAnimSpeed" type="range" min=".2" max="3" step=".1"><span class="val" id="textAnimSpeedV"></span></div>
+    <div class="row"><label>動畫幅度</label><input id="textAnimAmp" type="range" min=".002" max=".05" step=".002"><span class="val" id="textAnimAmpV"></span></div>
+  </div>
+
+  <div class="group">
+    <h3>水層（穩定版）</h3>
+    <div class="checkboxRow"><input id="waterEnabled" type="checkbox"><label for="waterEnabled">顯示 water.png</label></div>
+    <div class="row"><label>透明度</label><input id="waterOpacity" type="range" min="0" max=".8" step=".02"><span class="val" id="waterOpacityV"></span></div>
+    <div class="row"><label>Y</label><input id="waterY" type="range" min="-.25" max=".05" step=".005"><span class="val" id="waterYV"></span></div>
+    <div class="row"><label>Z</label><input id="waterZ" type="range" min="0" max=".14" step=".001"><span class="val" id="waterZV"></span></div>
+    <div class="row"><label>大小</label><input id="waterScale" type="range" min=".5" max="1.4" step=".02"><span class="val" id="waterScaleV"></span></div>
+    <div class="row"><label>流動幅度</label><input id="waterFlowAmp" type="range" min="0" max=".02" step=".001"><span class="val" id="waterFlowAmpV"></span></div>
+    <div class="row"><label>流動速度</label><input id="waterFlowSpeed" type="range" min=".1" max="2.5" step=".1"><span class="val" id="waterFlowSpeedV"></span></div>
+    <div class="row"><label>水邊柔化</label><input id="waterFeather" type="range" min=".01" max=".25" step=".005"><span class="val" id="waterFeatherV"></span></div>
+    <div class="row"><label>水邊不規則</label><input id="waterIrregular" type="range" min="0" max=".12" step=".005"><span class="val" id="waterIrregularV"></span></div>
+  </div>
+
+  <div class="group">
+    <h3>船尾水紋</h3>
+    <div class="row"><label>生成間隔</label><input id="wakeInterval" type="range" min="40" max="300" step="10"><span class="val" id="wakeIntervalV"></span></div>
+    <div class="row"><label>水紋大小</label><input id="wakeSize" type="range" min=".5" max="4" step=".1"><span class="val" id="wakeSizeV"></span></div>
+    <div class="row"><label>水紋透明</label><input id="wakeOpacity" type="range" min=".03" max=".8" step=".01"><span class="val" id="wakeOpacityV"></span></div>
+    <div class="row"><label>存活時間</label><input id="wakeLife" type="range" min="500" max="3500" step="100"><span class="val" id="wakeLifeV"></span></div>
+    <div class="row"><label>向後延展</label><input id="wakeDrift" type="range" min="0" max=".04" step=".002"><span class="val" id="wakeDriftV"></span></div>
+  </div>
+
+  <button id="snapshot">輸出目前參數</button>
+  <textarea id="values" readonly></textarea>
+</div>
+
+<script>
+window.ARCFG={
+  scale:.63,
+  sceneZ:0,
+  base:{enabled:true,opacity:.60,z:.03,scale:1.40},
+  blackBase:{enabled:false,opacity:.48,z:.028,scale:1.40},
+  bk:{enabled:true,opacity:.74,z:0,scale:.98},
+  bgMask:{enabled:true,feather:.20,irregular:.015},
+  bridge:{backZ:.060,frontZ:.077},
+  boats:[
+    {enabled:true,width:.09,height:.05,scale:1.70,y:-.10,z:.070,startX:-.17,endX:.21,baseDuration:13000,speed:.65,brightness:1.25,contrast:1.75,phaseOffset:0},
+    {enabled:false,width:.09,height:.05,scale:1.50,y:-.038,z:.044,startX:.12,endX:.35,baseDuration:13000,speed:2.80,brightness:1.15,contrast:1.55,phaseOffset:4200}
+  ],
+  clouds:[
+    {x:-.245,y:.335,z:.088,opacity:.52,w:.17,h:.086,scale:1.18,span:.105,fadeRange:.22,fadeFreq:.0010},
+    {x:.165,y:.405,z:.066,opacity:.60,w:.14,h:.070,scale:1.38,span:.095,fadeRange:.16,fadeFreq:.0009},
+    {x:-.075,y:.205,z:.104,opacity:.36,w:.15,h:.085,scale:.82,span:.080,fadeRange:.26,fadeFreq:.00115},
+    {x:.275,y:.245,z:.054,opacity:.43,w:.18,h:.070,scale:1.02,span:.070,fadeRange:.14,fadeFreq:.00085}
+  ],
+  cloudSpeed:.65,
+  water:{enabled:true,opacity:.40,y:.04,z:.108,scale:1.02,flowAmp:.012,flowSpeed:1.40,scalePulse:.006,feather:.25,irregular:.12},
+  text:{enabled:true,value:"1920年 明治橋",x:0,y:.285,z:.120,size:62,font:"kai",color:"#4a2b18",weight:700,stroke:true,strokeColor:"#f5e7c8",strokeWidth:2,anim:"float",animSpeed:1.0,animAmp:.012},
+  credits:{
+    enabled:false,
+    value:"1920年 明治橋\n明治橋曾是城市交通與河岸景觀的重要節點。\n在時代更迭中，橋梁見證了地方生活與城市發展。",
+    x:0,y:-.20,z:.125,w:.52,h:.22,
+    size:46,font:"ming",
+    color:"#f6ead2",opacity:.92,
+    bgColor:"#000000",bgOpacity:.24,
+    speed:.75,loop:true
+  },
+  wake:{interval:90,offsetX:.028,offsetY:.006,z:.008,rx:.24,ry:.06,opacity:.28,life:1900,drift:.018,growX:2.6,growY:1.1}
+};
+
+const scene=document.getElementById('arScene');
+const target=document.getElementById('target0');
+const sceneGroup=document.getElementById('sceneGroup');
+const basePlate=document.getElementById('basePlate');
+const blackBase=document.getElementById('blackBase');
+const bkLayer=document.getElementById('bkLayer');
+const backBridge=document.getElementById('backBridge');
+const frontBridge=document.getElementById('frontBridge');
+const waterLayer=document.getElementById('waterLayer');
+const textLayer=document.getElementById('textLayer');
+const creditsLayer=document.getElementById('creditsLayer');
+const creditsCanvas=document.getElementById('creditsCanvas');
+const creditsCtx=creditsCanvas.getContext('2d');
+const creditsInput=document.getElementById('creditsInput');
+const textCanvas=document.getElementById('textCanvas');
+const textCtx=textCanvas.getContext('2d');
+const targetLoading=document.getElementById('targetLoading');
+const liveTextInput=document.getElementById('liveTextInput');
+
+const boat1=document.getElementById('boat1');
+const boat2=document.getElementById('boat2');
+const boatVideo=document.getElementById('boatVideo');
+const boatVideoIOS=document.getElementById('boatVideoIOS');
+const isIOS=/iP(hone|ad|od)/.test(navigator.userAgent) ||
+  (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+const activeBoatVideo=isIOS?boatVideoIOS:boatVideo;
+
+const status=document.getElementById('status');
+const camInfo=document.getElementById('camInfo');
+const startBtn=document.getElementById('startBtn');
+const stopBtn=document.getElementById('stopBtn');
+const tuner=document.getElementById('tuner');
+const tunerToggle=document.getElementById('tunerToggle');
+const explainBtn=document.getElementById('explainBtn');
+const creditsOverlay=document.getElementById('creditsOverlay');
+const creditsOverlayText=document.getElementById('creditsOverlayText');
+let creditsOverlayOpen=false;
+let creditsOverlayStart=0;
+let creditsOverlayRAF=null;
+
+let running=false,starting=false,ready=false,timer=null;
+
+function setBoatMaterial(el,b){
+  if(isIOS){
+    el.setAttribute('material',{
+      shader:'video-grade-key',
+      src:'#boatVideoIOS',
+      brightness:b.brightness,
+      contrast:b.contrast,
+      opacity:1,
+      similarity:.14,
+      smoothness:.11,
+      transparent:true,
+      side:'double',
+      depthWrite:false
+    });
+  }else{
+    el.setAttribute('material',{
+      shader:'video-grade',
+      src:'#boatVideo',
+      brightness:b.brightness,
+      contrast:b.contrast,
+      opacity:1,
+      transparent:true,
+      side:'double',
+      depthWrite:false,
+      alphaTest:.10
+    });
+  }
+}
+
+
+function getCanvasFont(fontKey,size,weight=700){
+  const families={
+    kai:`"DFKai-SB","BiauKai","Kaiti TC","KaiTi","STKaiti","Noto Serif TC",serif`,
+    ming:`"PMingLiU","MingLiU","Songti TC","STSong","Noto Serif TC",serif`,
+    song:`"Songti TC","STSong","SimSun","Noto Serif TC",serif`,
+    serif:`"Noto Serif TC","PMingLiU","Songti TC","Times New Roman",serif`,
+    sans:`"Noto Sans TC","Microsoft JhengHei","PingFang TC","Heiti TC","Arial",sans-serif`,
+    rounded:`"Arial Rounded MT Bold","PingFang TC","Noto Sans TC",sans-serif`,
+    hand:`"DFKai-SB","BiauKai","Kaiti TC","KaiTi","STKaiti",cursive`,
+    mono:`"SFMono-Regular","Consolas","Courier New","Noto Sans Mono CJK TC",monospace`,
+    thin:`"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif`,
+    system:`system-ui,-apple-system,"BlinkMacSystemFont","Segoe UI","PingFang TC","Microsoft JhengHei",sans-serif`
+  };
+  const effectiveWeight=(fontKey==='thin')?300:weight;
+  return `${effectiveWeight} ${size}px ${families[fontKey]||families.kai}`;
+}
+function renderTextTexture(opts={}){
+  const c=ARCFG.text;
+  const displayText=(opts.text!==undefined)?opts.text:(c.value||'');
+  const shimmer=opts.shimmer||0;
+  textCtx.clearRect(0,0,textCanvas.width,textCanvas.height);
+  textCtx.textAlign='center'; textCtx.textBaseline='middle';
+  textCtx.font=getCanvasFont(c.font,c.size,c.weight);
+  textCtx.shadowColor='rgba(0,0,0,.16)'; textCtx.shadowBlur=3; textCtx.shadowOffsetY=1;
+  if(c.stroke){
+    textCtx.lineWidth=c.strokeWidth||2;
+    textCtx.strokeStyle=c.strokeColor||'#f5e7c8';
+    textCtx.strokeText(displayText,textCanvas.width/2,textCanvas.height/2);
+  }
+  if(c.anim==='shimmer' && shimmer>0){
+    const g=textCtx.createLinearGradient(250,0,950,0);
+    const p=Math.max(0.02,Math.min(.98,shimmer));
+    g.addColorStop(Math.max(0,p-.18),c.color); g.addColorStop(p,'#fff3c8'); g.addColorStop(Math.min(1,p+.18),c.color);
+    textCtx.fillStyle=g;
+  }else textCtx.fillStyle=c.color;
+  textCtx.fillText(displayText,textCanvas.width/2,textCanvas.height/2);
+  textLayer.setAttribute('src',textCanvas.toDataURL('image/png'));
+  const metrics=textCtx.measureText(displayText||' ');
+  const pxW=Math.max(180,Math.min(1120,metrics.width+100));
+  const worldW=Math.max(.10,Math.min(.62,pxW/1800));
+  const worldH=worldW*(textCanvas.height/textCanvas.width);
+  textLayer.setAttribute('width',worldW); textLayer.setAttribute('height',worldH);
+}
+
+function hexToRgba(hex,a){
+  const h=hex.replace('#','');
+  const n=parseInt(h.length===3?h.split('').map(x=>x+x).join(''):h,16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+}
+
+function getCreditsFont(fontKey,size){
+  const families={
+    kai:`"DFKai-SB","BiauKai","Kaiti TC","KaiTi","STKaiti","Noto Serif TC",serif`,
+    ming:`"PMingLiU","MingLiU","Songti TC","STSong","Noto Serif TC",serif`,
+    song:`"Songti TC","STSong","SimSun","Noto Serif TC",serif`,
+    serif:`"Noto Serif TC","PMingLiU","Songti TC",serif`,
+    sans:`"Noto Sans TC","Microsoft JhengHei","PingFang TC","Heiti TC",sans-serif`,
+    rounded:`"Arial Rounded MT Bold","PingFang TC","Noto Sans TC",sans-serif`,
+    hand:`"DFKai-SB","BiauKai","Kaiti TC","KaiTi","STKaiti",cursive`,
+    mono:`"SFMono-Regular","Consolas","Courier New",monospace`,
+    thin:`"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif`,
+    system:`system-ui,-apple-system,"Segoe UI","PingFang TC","Microsoft JhengHei",sans-serif`
+  };
+  return `500 ${size}px ${families[fontKey]||families.ming}`;
+}
+
+function wrapCreditsText(ctx,text,maxWidth){
+  const paragraphs=String(text||'').split(/\n/);
+  const lines=[];
+  for(const para of paragraphs){
+    if(!para){lines.push('');continue}
+    let line='';
+    for(const ch of para){
+      const test=line+ch;
+      if(ctx.measureText(test).width>maxWidth && line){
+        lines.push(line); line=ch;
+      }else line=test;
+    }
+    if(line) lines.push(line);
+  }
+  return lines;
+}
+
+function renderCreditsTexture(scrollPx=0){
+  const c=ARCFG.credits;
+  const W=creditsCanvas.width,H=creditsCanvas.height;
+  creditsCtx.clearRect(0,0,W,H);
+
+  // configurable translucent frame
+  if(c.bgOpacity>0){
+    creditsCtx.fillStyle=hexToRgba(c.bgColor,c.bgOpacity);
+    creditsCtx.fillRect(0,0,W,H);
+  }
+
+  const pad=72;
+  creditsCtx.font=getCreditsFont(c.font,c.size);
+  creditsCtx.textAlign='left';
+  creditsCtx.textBaseline='top';
+  creditsCtx.fillStyle=hexToRgba(c.color,c.opacity);
+  const lines=wrapCreditsText(creditsCtx,c.value,W-pad*2);
+  const lineH=c.size*1.55;
+  const totalH=lines.length*lineH;
+  let y=H-scrollPx;
+
+  for(const line of lines){
+    creditsCtx.fillText(line,pad,y);
+    y+=lineH;
+  }
+
+  creditsLayer.setAttribute('src',creditsCanvas.toDataURL('image/png'));
+  creditsLayer.setAttribute('width',c.w);
+  creditsLayer.setAttribute('height',c.h);
+  return totalH+H;
+}
+
+AFRAME.registerComponent('credits-scroll',{
+  init(){
+    this.start=performance.now();
+    this.lastDraw=0;
+    this.totalScroll=1800;
+  },
+  tick(t){
+    const c=ARCFG?.credits;
+    if(!c || !c.enabled){this.el.setAttribute('visible',false);return}
+    this.el.setAttribute('visible',true);
+    this.el.object3D.position.set(c.x,c.y,c.z);
+
+    if(t-this.lastDraw<85)return;
+    this.lastDraw=t;
+
+    const elapsed=(t-this.start)*0.001;
+    let scroll=elapsed*(90*c.speed);
+    if(c.loop && this.totalScroll>0) scroll%=this.totalScroll;
+    else scroll=Math.min(scroll,this.totalScroll);
+
+    this.totalScroll=renderCreditsTexture(scroll);
+  }
+});
+
+AFRAME.registerComponent('live-text-anim',{
+  init(){this.lastTextureUpdate=0;this.lastMode='';this.typeStart=performance.now()},
+  tick(t){
+    const c=ARCFG?.text;if(!c||!c.enabled)return;
+    if(this.lastMode!==c.anim){this.lastMode=c.anim;this.typeStart=t;renderTextTexture()}
+    let x=c.x,y=c.y,z=c.z,scale=1,opacity=1;
+    if(c.anim==='float'){y+=Math.sin(t*.0018*c.animSpeed)*c.animAmp;x+=Math.cos(t*.0012*c.animSpeed)*c.animAmp*.25}
+    else if(c.anim==='breathe'){scale=1+Math.sin(t*.002*c.animSpeed)*(c.animAmp*2.4)}
+    else if(c.anim==='fade'){opacity=.58+.42*(Math.sin(t*.002*c.animSpeed)*.5+.5)}
+    else if(c.anim==='typewriter'){
+      if(t-this.lastTextureUpdate>90){this.lastTextureUpdate=t;const full=c.value||'';const elapsed=(t-this.typeStart)*.001*c.animSpeed;const count=Math.floor(elapsed*5)%(full.length+8);renderTextTexture({text:full.slice(0,Math.min(full.length,count))})}
+    }else if(c.anim==='shimmer'){
+      if(t-this.lastTextureUpdate>90){this.lastTextureUpdate=t;renderTextTexture({shimmer:(Math.sin(t*.0015*c.animSpeed)*.5+.5)})}
+    }
+    this.el.object3D.position.set(x,y,z);this.el.object3D.scale.set(scale,scale,1);
+    const mesh=this.el.getObject3D('mesh');if(mesh?.material){mesh.material.transparent=true;mesh.material.opacity=opacity}
+  }
+});
+
+function showTargetLoading(){targetLoading.classList.add('show')}
+function hideTargetLoading(){targetLoading.classList.remove('show')}
+
+
+function syncCreditsOverlayStyle(){
+  const c=ARCFG.credits;
+  creditsOverlay.style.height=Math.max(110,Math.min(420,c.h*700))+'px';
+  creditsOverlay.style.background=hexToRgba(c.bgColor,c.bgOpacity);
+  creditsOverlayText.style.color=hexToRgba(c.color,c.opacity);
+  creditsOverlayText.style.font=getCreditsFont(c.font,Math.max(18,Math.min(46,c.size*.55)));
+  creditsOverlayText.textContent=c.value||'';
+}
+function animateCreditsOverlay(ts){
+  if(!creditsOverlayOpen)return;
+  const c=ARCFG.credits;
+  if(!creditsOverlayStart)creditsOverlayStart=ts;
+  const elapsed=(ts-creditsOverlayStart)/1000;
+  const speedPx=18+c.speed*42;
+  const innerH=creditsOverlay.clientHeight||220;
+  const textH=creditsOverlayText.scrollHeight||300;
+  const travel=textH+innerH;
+  let y=innerH-((elapsed*speedPx)%Math.max(1,travel));
+  if(!c.loop)y=Math.max(-textH,y);
+  creditsOverlayText.style.transform=`translateY(${y}px)`;
+  creditsOverlayRAF=requestAnimationFrame(animateCreditsOverlay);
+}
+function openCreditsOverlay(){
+  creditsOverlayOpen=true;
+  creditsOverlayStart=0;
+  syncCreditsOverlayStyle();
+  creditsOverlay.classList.add('show');
+  explainBtn.textContent='關閉說明';
+  if(creditsOverlayRAF)cancelAnimationFrame(creditsOverlayRAF);
+  creditsOverlayRAF=requestAnimationFrame(animateCreditsOverlay);
+}
+function closeCreditsOverlay(){
+  creditsOverlayOpen=false;
+  creditsOverlay.classList.remove('show');
+  explainBtn.textContent='看說明';
+  if(creditsOverlayRAF){cancelAnimationFrame(creditsOverlayRAF);creditsOverlayRAF=null;}
+}
+
+function applyAll(){
+  const c=ARCFG;
+  sceneGroup.setAttribute('position',`0 0 ${c.sceneZ}`);
+
+  const w=c.scale,h=c.scale*.75;
+
+  basePlate.setAttribute('visible',c.base.enabled);
+  basePlate.setAttribute('position',`0 0 ${c.base.z}`);
+  basePlate.setAttribute('width',w*c.base.scale);
+  basePlate.setAttribute('height',h*c.base.scale);
+  basePlate.setAttribute('material','opacity',c.base.opacity);
+  basePlate.setAttribute('material','feather',c.bgMask.enabled?c.bgMask.feather:0.001);
+  basePlate.setAttribute('material','irregular',c.bgMask.enabled?c.bgMask.irregular:0);
+  blackBase.setAttribute('visible',c.blackBase.enabled);
+  blackBase.setAttribute('position',`0 0 ${c.blackBase.z}`);
+  blackBase.setAttribute('width',w*c.blackBase.scale);
+  blackBase.setAttribute('height',h*c.blackBase.scale);
+  blackBase.setAttribute('material','opacity',c.blackBase.opacity);
+  blackBase.setAttribute('material','feather',c.bgMask.enabled?c.bgMask.feather:0.001);
+  blackBase.setAttribute('material','irregular',c.bgMask.enabled?c.bgMask.irregular:0);
+
+
+  bkLayer.setAttribute('visible',c.bk.enabled);
+  bkLayer.setAttribute('position',`0 0 ${c.bk.z}`);
+  bkLayer.setAttribute('width',w*c.bk.scale);
+  bkLayer.setAttribute('height',h*c.bk.scale);
+  bkLayer.setAttribute('material','opacity',c.bk.opacity);
+  bkLayer.setAttribute('material','feather',c.bgMask.enabled?c.bgMask.feather:0.001);
+  bkLayer.setAttribute('material','irregular',c.bgMask.enabled?c.bgMask.irregular:0);
+
+  backBridge.setAttribute('position',`0 0 ${c.bridge.backZ}`);
+  backBridge.setAttribute('width',w); backBridge.setAttribute('height',h);
+  frontBridge.setAttribute('position',`0 0 ${c.bridge.frontZ}`);
+  frontBridge.setAttribute('width',w); frontBridge.setAttribute('height',h);
+
+  waterLayer.setAttribute('visible',c.water.enabled);
+  waterLayer.setAttribute('position',`0 ${c.water.y} ${c.water.z}`);
+  waterLayer.setAttribute('width',w*c.water.scale);
+  waterLayer.setAttribute('height',h*c.water.scale);
+  waterLayer.setAttribute('material','opacity',c.water.opacity);
+  waterLayer.setAttribute('material','feather',c.water.feather);
+  waterLayer.setAttribute('material','irregular',c.water.irregular);
+  textLayer.setAttribute('visible',c.text.enabled);
+  textLayer.setAttribute('position',`${c.text.x} ${c.text.y} ${c.text.z}`);
+  creditsLayer.setAttribute('visible',c.credits.enabled);
+  creditsLayer.setAttribute('position',`${c.credits.x} ${c.credits.y} ${c.credits.z}`);
+  creditsLayer.setAttribute('width',c.credits.w);
+  creditsLayer.setAttribute('height',c.credits.h);
+
+
+
+  [boat1,boat2].forEach((el,i)=>{
+    const b=c.boats[i];
+    el.setAttribute('width',b.width*b.scale);
+    el.setAttribute('height',b.height*b.scale);
+    setBoatMaterial(el,b);
+  });
+
+  c.clouds.forEach((cl,i)=>{
+    const el=document.getElementById('cloud'+(i+1));
+    el.setAttribute('width',cl.w);
+    el.setAttribute('height',cl.h);
+  });
+}
+
+function bindRange(id,getter,setter,decimals=3){
+  const el=document.getElementById(id),out=document.getElementById(id+'V');
+  el.value=getter(); out.textContent=Number(getter()).toFixed(decimals);
+  el.addEventListener('input',()=>{setter(+el.value);out.textContent=Number(el.value).toFixed(decimals);applyAll()});
+}
+
+bindRange('scale',()=>ARCFG.scale,v=>ARCFG.scale=v,2);
+bindRange('sceneZ',()=>ARCFG.sceneZ,v=>ARCFG.sceneZ=v);
+bindRange('baseOpacity',()=>ARCFG.base.opacity,v=>ARCFG.base.opacity=v,2);
+bindRange('baseZ',()=>ARCFG.base.z,v=>ARCFG.base.z=v);
+bindRange('baseScale',()=>ARCFG.base.scale,v=>ARCFG.base.scale=v,2);
+bindRange('blackOpacity',()=>ARCFG.blackBase.opacity,v=>ARCFG.blackBase.opacity=v,2);
+bindRange('blackZ',()=>ARCFG.blackBase.z,v=>ARCFG.blackBase.z=v,3);
+bindRange('blackScale',()=>ARCFG.blackBase.scale,v=>ARCFG.blackBase.scale=v,2);
+
+bindRange('bkOpacity',()=>ARCFG.bk.opacity,v=>ARCFG.bk.opacity=v,2);
+bindRange('bkZ',()=>ARCFG.bk.z,v=>ARCFG.bk.z=v);
+bindRange('bkScale',()=>ARCFG.bk.scale,v=>ARCFG.bk.scale=v,2);
+bindRange('bgFeather',()=>ARCFG.bgMask.feather,v=>ARCFG.bgMask.feather=v,3);
+bindRange('bgIrregular',()=>ARCFG.bgMask.irregular,v=>ARCFG.bgMask.irregular=v,3);
+bindRange('backZ',()=>ARCFG.bridge.backZ,v=>ARCFG.bridge.backZ=v);
+bindRange('frontZ',()=>ARCFG.bridge.frontZ,v=>ARCFG.bridge.frontZ=v);
+
+function bindBoat(n){
+  const b=ARCFG.boats[n-1],p='b'+n;
+  bindRange(p+'Scale',()=>b.scale,v=>b.scale=v,2);
+  bindRange(p+'Y',()=>b.y,v=>b.y=v);
+  bindRange(p+'Z',()=>b.z,v=>b.z=v);
+  bindRange(p+'StartX',()=>b.startX,v=>b.startX=v,2);
+  bindRange(p+'EndX',()=>b.endX,v=>b.endX=v,2);
+  bindRange(p+'Speed',()=>b.speed,v=>b.speed=v,2);
+  bindRange(p+'Brightness',()=>b.brightness,v=>b.brightness=v,2);
+  bindRange(p+'Contrast',()=>b.contrast,v=>b.contrast=v,2);
+}
+bindBoat(1);bindBoat(2);
+
+document.getElementById('softBg').checked=ARCFG.bgMask.enabled;
+document.getElementById('softBg').addEventListener('change',e=>{ARCFG.bgMask.enabled=e.target.checked;applyAll()});
+document.getElementById('useWhiteBase').checked=ARCFG.base.enabled;
+document.getElementById('useWhiteBase').addEventListener('change',e=>{ARCFG.base.enabled=e.target.checked;applyAll()});
+document.getElementById('useBlackBase').checked=ARCFG.blackBase.enabled;
+document.getElementById('useBlackBase').addEventListener('change',e=>{ARCFG.blackBase.enabled=e.target.checked;applyAll()});
+
+document.getElementById('useBk').checked=ARCFG.bk.enabled;
+document.getElementById('useBk').addEventListener('change',e=>{ARCFG.bk.enabled=e.target.checked;applyAll()});
+document.getElementById('b2Enabled').checked=ARCFG.boats[1].enabled;
+document.getElementById('b2Enabled').addEventListener('change',e=>{ARCFG.boats[1].enabled=e.target.checked;applyAll()});
+
+bindRange('cloudSpeed',()=>ARCFG.cloudSpeed,v=>ARCFG.cloudSpeed=v,1);
+
+const cloudGroups=document.getElementById('cloudGroups');
+ARCFG.clouds.forEach((cl,i)=>{
+  const n=i+1;
+  const wrap=document.createElement('div');
+  wrap.className='group';
+  wrap.innerHTML=`
+    <h3>雲 ${n}</h3>
+    <div class="row"><label>Y（上下）</label><input id="c${n}Y" type="range" min="-.30" max=".70" step=".01"><span class="val" id="c${n}YV"></span></div>
+    <div class="row"><label>Z</label><input id="c${n}Z" type="range" min="0" max=".16" step=".002"><span class="val" id="c${n}ZV"></span></div>
+    <div class="row"><label>大小</label><input id="c${n}Scale" type="range" min=".4" max="2.2" step=".05"><span class="val" id="c${n}ScaleV"></span></div>
+    <div class="row"><label>基礎透明度</label><input id="c${n}Opacity" type="range" min=".05" max="1" step=".02"><span class="val" id="c${n}OpacityV"></span></div>
+    <div class="row"><label>透明變化幅度</label><input id="c${n}FadeRange" type="range" min="0" max=".8" step=".02"><span class="val" id="c${n}FadeRangeV"></span></div>
+    <div class="row"><label>透明變化頻率</label><input id="c${n}FadeFreq" type="range" min=".0002" max=".005" step=".0001"><span class="val" id="c${n}FadeFreqV"></span></div>
+    <div class="row"><label>橫移範圍</label><input id="c${n}Span" type="range" min=".10" max=".70" step=".01"><span class="val" id="c${n}SpanV"></span></div>
+  `;
+  cloudGroups.appendChild(wrap);
+  bindRange(`c${n}Y`,()=>cl.y,v=>cl.y=v,2);
+  bindRange(`c${n}Z`,()=>cl.z,v=>cl.z=v);
+  bindRange(`c${n}Scale`,()=>cl.scale,v=>cl.scale=v,2);
+  bindRange(`c${n}Opacity`,()=>cl.opacity,v=>cl.opacity=v,2);
+  bindRange(`c${n}FadeRange`,()=>cl.fadeRange,v=>cl.fadeRange=v,2);
+  bindRange(`c${n}FadeFreq`,()=>cl.fadeFreq,v=>cl.fadeFreq=v,4);
+  bindRange(`c${n}Span`,()=>cl.span,v=>cl.span=v,2);
+});
+
+
+
+document.getElementById('creditsEnabled').checked=ARCFG.credits.enabled;
+document.getElementById('creditsEnabled').addEventListener('change',e=>{ARCFG.credits.enabled=e.target.checked;applyAll()});
+bindRange('creditsX',()=>ARCFG.credits.x,v=>ARCFG.credits.x=v,3);
+bindRange('creditsY',()=>ARCFG.credits.y,v=>ARCFG.credits.y=v,3);
+bindRange('creditsZ',()=>ARCFG.credits.z,v=>ARCFG.credits.z=v,3);
+bindRange('creditsW',()=>ARCFG.credits.w,v=>{ARCFG.credits.w=v;renderCreditsTexture(0)},2);
+bindRange('creditsH',()=>ARCFG.credits.h,v=>{ARCFG.credits.h=v;renderCreditsTexture(0)},2);
+bindRange('creditsSize',()=>ARCFG.credits.size,v=>{ARCFG.credits.size=v;renderCreditsTexture(0)},0);
+bindRange('creditsOpacity',()=>ARCFG.credits.opacity,v=>{ARCFG.credits.opacity=v;renderCreditsTexture(0);syncCreditsOverlayStyle()},2);
+bindRange('creditsBgOpacity',()=>ARCFG.credits.bgOpacity,v=>{ARCFG.credits.bgOpacity=v;renderCreditsTexture(0);syncCreditsOverlayStyle()},2);
+bindRange('creditsSpeed',()=>ARCFG.credits.speed,v=>ARCFG.credits.speed=v,2);
+document.getElementById('creditsFont').value=ARCFG.credits.font;
+document.getElementById('creditsFont').addEventListener('change',e=>{ARCFG.credits.font=e.target.value;renderCreditsTexture(0);syncCreditsOverlayStyle()});
+document.getElementById('creditsColor').value=ARCFG.credits.color;
+document.getElementById('creditsColor').addEventListener('input',e=>{ARCFG.credits.color=e.target.value;renderCreditsTexture(0);syncCreditsOverlayStyle()});
+document.getElementById('creditsBgColor').value=ARCFG.credits.bgColor;
+document.getElementById('creditsBgColor').addEventListener('input',e=>{ARCFG.credits.bgColor=e.target.value;renderCreditsTexture(0);syncCreditsOverlayStyle()});
+document.getElementById('creditsLoop').checked=ARCFG.credits.loop;
+document.getElementById('creditsLoop').addEventListener('change',e=>ARCFG.credits.loop=e.target.checked);
+document.getElementById('creditsApply').addEventListener('click',()=>{
+  ARCFG.credits.value=creditsInput.value.trim()||' ';
+  renderCreditsTexture(0);
+  syncCreditsOverlayStyle();
+  if(creditsOverlayOpen) creditsOverlayStart=0;
+  applyAll();
+});
+
+document.getElementById('waterEnabled').checked=ARCFG.water.enabled;
+document.getElementById('waterEnabled').addEventListener('change',e=>{ARCFG.water.enabled=e.target.checked;applyAll()});
+bindRange('waterOpacity',()=>ARCFG.water.opacity,v=>ARCFG.water.opacity=v,2);
+bindRange('waterY',()=>ARCFG.water.y,v=>ARCFG.water.y=v,3);
+bindRange('waterZ',()=>ARCFG.water.z,v=>ARCFG.water.z=v,3);
+bindRange('waterScale',()=>ARCFG.water.scale,v=>ARCFG.water.scale=v,2);
+bindRange('waterFlowAmp',()=>ARCFG.water.flowAmp,v=>ARCFG.water.flowAmp=v,3);
+bindRange('waterFlowSpeed',()=>ARCFG.water.flowSpeed,v=>ARCFG.water.flowSpeed=v,2);
+bindRange('waterFeather',()=>ARCFG.water.feather,v=>ARCFG.water.feather=v,3);
+bindRange('waterIrregular',()=>ARCFG.water.irregular,v=>ARCFG.water.irregular=v,3);
+document.getElementById('textEnabled').checked=ARCFG.text.enabled;
+document.getElementById('textEnabled').addEventListener('change',e=>{ARCFG.text.enabled=e.target.checked;applyAll()});
+bindRange('textX',()=>ARCFG.text.x,v=>ARCFG.text.x=v,3);
+bindRange('textY',()=>ARCFG.text.y,v=>ARCFG.text.y=v,3);
+bindRange('textZ',()=>ARCFG.text.z,v=>ARCFG.text.z=v,3);
+bindRange('textSize',()=>ARCFG.text.size,v=>{ARCFG.text.size=v;renderTextTexture()},0);
+document.getElementById('textFont').value=ARCFG.text.font;
+document.getElementById('textFont').addEventListener('change',e=>{ARCFG.text.font=e.target.value;renderTextTexture()});
+document.getElementById('textWeight').value=String(ARCFG.text.weight);
+document.getElementById('textWeight').addEventListener('change',e=>{ARCFG.text.weight=+e.target.value;renderTextTexture()});
+document.getElementById('textStroke').checked=ARCFG.text.stroke;
+document.getElementById('textStroke').addEventListener('change',e=>{ARCFG.text.stroke=e.target.checked;renderTextTexture()});
+document.getElementById('textAnim').value=ARCFG.text.anim;
+document.getElementById('textAnim').addEventListener('change',e=>{ARCFG.text.anim=e.target.value;renderTextTexture()});
+bindRange('textAnimSpeed',()=>ARCFG.text.animSpeed,v=>ARCFG.text.animSpeed=v,1);
+bindRange('textAnimAmp',()=>ARCFG.text.animAmp,v=>ARCFG.text.animAmp=v,3);
+document.getElementById('textSubmit').addEventListener('click',()=>{ARCFG.text.value=liveTextInput.value.trim()||' ';renderTextTexture();
+renderCreditsTexture(0);applyAll()});
+liveTextInput.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();document.getElementById('textSubmit').click()}});
+
+
+bindRange('wakeInterval',()=>ARCFG.wake.interval,v=>ARCFG.wake.interval=v,0);
+bindRange('wakeSize',()=>1,v=>{ARCFG.wake.rx=.060*v;ARCFG.wake.ry=.015*v},1);
+bindRange('wakeOpacity',()=>ARCFG.wake.opacity,v=>ARCFG.wake.opacity=v,2);
+bindRange('wakeLife',()=>ARCFG.wake.life,v=>ARCFG.wake.life=v,0);
+bindRange('wakeDrift',()=>ARCFG.wake.drift,v=>ARCFG.wake.drift=v,3);
+
+applyAll();
+renderTextTexture();
+
+document.getElementById('snapshot').addEventListener('click',()=>{
+  document.getElementById('values').value=JSON.stringify(ARCFG,null,2);
+});
+
+tunerToggle.addEventListener('click',()=>{
+  tuner.classList.toggle('open');
+  tunerToggle.textContent=tuner.classList.contains('open')?'收起參數':'調整參數';
+});
+explainBtn.addEventListener('click',()=>{
+  if(creditsOverlayOpen)closeCreditsOverlay();
+  else openCreditsOverlay();
+});
+
+
+scene.addEventListener('loaded',()=>ready=true);
+const getMindAR=()=>scene.systems&&scene.systems['mindar-image-system'];
+
+function waitMindAR(timeout=8000){
+  return new Promise((resolve,reject)=>{
+    const t0=Date.now();
+    const i=setInterval(()=>{
+      const s=getMindAR();
+      if(s){clearInterval(i);resolve(s)}
+      else if(Date.now()-t0>timeout){clearInterval(i);reject(new Error('MindAR timeout'))}
+    },100)
+  })
+}
+
+async function unlockVideo(){
+  const videos=isIOS?[boatVideoIOS,boatVideo]:[boatVideo,boatVideoIOS];
+  for(const v of videos){
+    try{
+      await v.play();
+      v.pause();
+      v.currentTime=0;
+    }catch(e){}
+  }
+}
+
+function updateCameraInfo(){
+  const cam=[...document.querySelectorAll('video')].find(v=>v!==boatVideo&&v!==boatVideoIOS&&v.srcObject);
+  if(!cam){camInfo.textContent='Camera: 尚未取得串流';return}
+  const tr=cam.srcObject.getVideoTracks()[0],s=tr.getSettings?.()||{};
+  camInfo.textContent=`Camera: ${cam.videoWidth||s.width||'?'}×${cam.videoHeight||s.height||'?'} @ ${Math.round(s.frameRate||0)||'?'}fps · Boat:${isIOS?'iOS MP4 key':'WebM alpha'}`;
+}
+
+async function startAR(){
+  if(starting||running)return;
+  starting=true;document.body.classList.add('scanning');
+  status.textContent='正在啟動高解析度後鏡頭…';
+  try{
+    await unlockVideo();
+    if(!ready&&!scene.hasLoaded)await new Promise(r=>scene.addEventListener('loaded',r,{once:true}));
+    const sys=await waitMindAR();await sys.start();
+    running=true;status.textContent='相機已開啟，請對準明信片';
+    timer=setInterval(updateCameraInfo,500);setTimeout(updateCameraInfo,500);
+  }catch(e){
+    console.error(e);document.body.classList.remove('scanning');
+    alert('相機啟動失敗，請確認 HTTPS 與相機權限。');
+  }finally{starting=false}
+}
+
+async function stopAR(){
+  clearInterval(timer);
+  try{
+    boatVideo.pause();boatVideoIOS.pause();boat1.setAttribute('visible',false);boat2.setAttribute('visible',false);
+    const sys=getMindAR();if(sys&&running)await sys.stop();
+  }catch(e){}
+  closeCreditsOverlay();
+  running=false;document.body.classList.remove('scanning');
+}
+
+target.addEventListener('targetFound',async()=>{
+  showTargetLoading();
+  status.textContent='已抓到圖像，載入 AR…';
+  boat1.setAttribute('visible',true);
+  boat2.setAttribute('visible',ARCFG.boats[1].enabled);
+  try{await activeBoatVideo.play()}catch(e){}
+  requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(()=>{
+    hideTargetLoading();
+    status.textContent='辨識成功 ✓ 可直接調參';
+  },450)));
+});
+target.addEventListener('targetLost',()=>{
+  closeCreditsOverlay();
+  hideTargetLoading();
+  status.textContent='失去 target，請重新對準';
+  boat1.setAttribute('visible',false);boat2.setAttribute('visible',false);boatVideo.pause();boatVideoIOS.pause();
+});
+
+startBtn.addEventListener('click',startAR);
+stopBtn.addEventListener('click',stopAR);
+</script>
+</body>
+</html>
